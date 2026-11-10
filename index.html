@@ -148,6 +148,14 @@ details[open] summary::after{content:"–"}
 .fab{position:fixed;right:16px;bottom:calc(var(--tab-h) + var(--sab) + 14px);width:54px;height:54px;border-radius:50%;background:var(--accent);color:#fff;border:0;font-size:28px;box-shadow:0 6px 18px rgba(0,0,0,.25);z-index:25}
 .sticky-bottom{position:sticky;bottom:calc(var(--tab-h) + var(--sab) + 8px);z-index:10}
 @media (min-width:600px){.set-row input{font-size:16px}}
+.lnk{color:var(--accent);font-weight:600;margin-top:2px}
+.chips{display:flex;gap:6px;overflow-x:auto;padding:10px 0 8px;-webkit-overflow-scrolling:touch;scrollbar-width:none}
+.chips::-webkit-scrollbar{display:none}
+.chip{flex:none;border:1px solid var(--line);background:var(--card);border-radius:999px;padding:6px 12px;font-size:13px;font-weight:600;color:var(--muted);white-space:nowrap}
+.chip.on{background:var(--accent);border-color:var(--accent);color:#fff}
+.scanbox{position:relative;background:#000;border-radius:12px;overflow:hidden;aspect-ratio:4/3}
+.scanbox video{width:100%;height:100%;object-fit:cover;display:block}
+.scanline{position:absolute;left:8%;right:8%;top:50%;height:2px;background:#ff3b30;box-shadow:0 0 8px #ff3b30;opacity:.85}
 
 </style>
 </head>
@@ -645,7 +653,8 @@ function openModal(html, onOpen) {
   document.body.style.overflow = 'hidden';
   if (onOpen) onOpen(bg);
 }
-function closeModal() { const m = document.getElementById('modal'); if (m) m.remove(); document.body.style.overflow = ''; }
+let MODAL_CLOSE = null; // se ejecuta una vez al cerrar (o sustituir) la ventana abierta
+function closeModal() { const m = document.getElementById('modal'); if (m) m.remove(); document.body.style.overflow = ''; const f = MODAL_CLOSE; MODAL_CLOSE = null; if (f) f(); }
 function confirmBox(msg, cb, danger) {
   openModal(`<h2>Confirmar</h2><p>${esc(msg)}</p><div class="row"><button class="btn block" onclick="closeModal()">Cancelar</button><button class="btn block ${danger ? 'danger' : 'primary'}" id="cf-ok">Sí, continuar</button></div>`, (m) => { m.querySelector('#cf-ok').onclick = () => { closeModal(); cb(); }; });
 }
@@ -654,7 +663,7 @@ function promptBox(title, fields, cb, submitLabel = 'Guardar') {
   const html = `<h2>${esc(title)}</h2>` + fields.map((f) => {
     if (f.type === 'select') return `<label class="f">${esc(f.label)}</label><select id="pf-${f.k}">${f.opts.map((o) => `<option value="${esc(o.v)}" ${o.v == f.value ? 'selected' : ''}>${esc(o.l)}</option>`).join('')}</select>`;
     if (f.type === 'textarea') return `<label class="f">${esc(f.label)}</label><textarea id="pf-${f.k}" placeholder="${esc(f.ph || '')}">${esc(f.value ?? '')}</textarea>`;
-    return `<label class="f">${esc(f.label)}</label><input id="pf-${f.k}" type="${f.type || 'text'}" ${f.type === 'number' ? 'inputmode="decimal" step="any"' : ''} value="${esc(f.value ?? '')}" placeholder="${esc(f.ph || '')}">`;
+    return `<label class="f">${esc(f.label)}</label><input id="pf-${f.k}" type="${f.type || 'text'}" ${f.type === 'number' ? 'inputmode="decimal" step="any"' : ''} ${f.list ? `list="pf-dl-${f.k}" autocomplete="off"` : ''} value="${esc(f.value ?? '')}" placeholder="${esc(f.ph || '')}">${f.list ? `<datalist id="pf-dl-${f.k}">${f.list.map((n) => `<option value="${esc(n)}">`).join('')}</datalist>` : ''}`;
   }).join('') + `<div class="spacer"></div><div class="row"><button class="btn block" onclick="closeModal()">Cancelar</button><button class="btn block primary" id="pf-ok">${esc(submitLabel)}</button></div>`;
   openModal(html, (m) => {
     m.querySelector('#pf-ok').onclick = () => {
@@ -753,7 +762,8 @@ function render() {
   nav.innerHTML = TABS.map(([k, l]) => `<button class="${VIEW === k ? 'active' : ''}" onclick="A.go('${k}')">${ICONS[k]}<span>${l}</span></button>`).join('');
   const main = document.getElementById('main');
   const fn = { inicio: viewInicio, entreno: viewEntreno, dieta: viewDieta, seguimiento: viewSeguimiento, mas: viewMas }[VIEW];
-  const scroll = main._scroll?.[VIEW] || 0;
+  const scroll = main._view === VIEW ? window.scrollY : (main._scroll?.[VIEW] || 0); // al redibujar la misma pestaña no se mueve el scroll
+  main._view = VIEW;
   main.innerHTML = fn();
   window.scrollTo(0, scroll);
   renderTimer();
@@ -958,64 +968,80 @@ function viewEntreno() {
 function viewRutina() {
   const r = rutinaActiva();
   const fase = S.settings.fase;
-  return setHeader('Entreno', `<button class="btn sm" onclick="A.go('entreno','historial')">Historial</button>`) +
+  const ed = !!SUB.rutEdit;
+  const head = setHeader('Entreno', `<button class="btn sm" onclick="A.go('entreno','historial')">Historial</button>`) +
     (S.sesionActiva ? `<div class="alert">🏋️ Entreno en curso: <b>${esc(S.sesionActiva.diaNombre)}</b> <button class="btn xs soft" onclick="A.go('entreno','sesion')">Continuar</button></div>` : '') +
     `<div class="card tight">
-      <label class="f">Rutina activa</label>
-      <div class="row"><select onchange="A.setRutina(this.value)">${S.rutinas.map((x) => `<option value="${x.id}" ${x.id === r.id ? 'selected' : ''}>${esc(x.nombre)}</option>`).join('')}</select><button class="btn icon" title="Editar rutina" onclick="A.editarRutina('${r.id}')">✎</button></div>
-      <label class="f">Fase actual</label>
+      <label class="f">Rutina activa · tienes ${S.rutinas.length}</label>
+      <select onchange="A.setRutina(this.value)">${S.rutinas.map((x) => `<option value="${x.id}" ${x.id === r.id ? 'selected' : ''}>${esc(x.nombre)}</option>`).join('')}</select>
+      <div class="row wrap" style="margin-top:8px;gap:6px"><button class="btn sm ${ed ? 'primary' : 'soft'}" onclick="A.rutEdit(${!ed})">${ed ? '✓ Terminar edición' : '✎ Editar ejercicios'}</button><button class="btn sm" onclick="A.nuevaRutina()">+ Nueva rutina</button><button class="btn sm" onclick="A.duplicarRutina('${r.id}')">Duplicar</button></div>
+      ${ed ? '' : `<label class="f">Fase actual</label>
       <div class="seg">${[1, 2, 3, 4, 5].map((f) => `<button class="${fase === f ? 'active' : ''}" onclick="A.setFase(${f})">F${f}</button>`).join('')}</div>
-      <div class="sub" style="margin-top:8px"><b>${esc(SEED.FASES[fase].nombre)}</b><br>${esc(SEED.FASES[fase].desc)}</div>
-    </div>
-    ${r.dias.map((d) => `<div class="card">
-      <div class="row between"><h2>${esc(d.nombre)}</h2><button class="btn sm primary" onclick="A.empezarSesion('${d.id}')">Empezar</button></div>
-      <div class="list" style="margin-top:6px">${d.ejercicios.map((e) => { const prev = ultimaSesionEj(e.id, fase); const top = prev && prev.e.series.filter((s) => s.kg != null).sort((a, b) => e1rm(b.kg, b.reps) - e1rm(a.kg, a.reps))[0]; return `<div class="li" onclick="A.go('entreno','ej:${e.id}')"><div class="grow"><div><b>${esc(e.nombre)}</b> ${e.tecnica ? `<span class="tag">${esc(e.tecnica)}</span>` : ''}</div><div class="xs muted">${top ? `Última: ${top.kg} kg x ${top.reps ?? '?'} (${fmtDate(prev.s.fecha)})` : e.ref ? 'Ref. prep. anterior disponible' : 'Sin registros'}</div></div><span class="muted">›</span></div>`; }).join('')}</div>
+      <div class="sub" style="margin-top:8px"><b>${esc(SEED.FASES[fase].nombre)}</b><br>${esc(SEED.FASES[fase].desc)}</div>`}
+    </div>`;
+  if (ed) return head + viewRutinaEdit(r);
+  return head +
+    (r.dias.length ? '' : `<div class="card"><div class="empty">Esta rutina aún no tiene días.<div class="spacer"></div><button class="btn primary" onclick="A.rutEdit(true)">Añadir días y ejercicios</button></div></div>`) +
+    r.dias.map((d) => `<div class="card">
+      <div class="row between"><h2>${esc(d.nombre)}</h2><div class="row" style="gap:6px"><button class="btn sm" title="Editar ejercicios" onclick="A.editarRutina('${r.id}','${d.id}')">✎</button><button class="btn sm primary" onclick="A.empezarSesion('${d.id}')">Empezar</button></div></div>
+      <div class="list" style="margin-top:6px">${d.ejercicios.map((e) => { const prev = ultimaSesionEj(e.id, fase); const top = prev && prev.e.series.filter((s) => s.kg != null).sort((a, b) => e1rm(b.kg, b.reps) - e1rm(a.kg, a.reps))[0]; return `<div class="li" onclick="A.go('entreno','ej:${e.id}')"><div class="grow"><div><b>${esc(e.nombre)}</b> ${e.tecnica ? `<span class="tag">${esc(e.tecnica)}</span>` : ''}</div><div class="xs muted">${top ? `Última: ${top.kg} kg x ${top.reps ?? '?'} (${fmtDate(prev.s.fecha)})` : e.ref ? 'Ref. prep. anterior disponible' : 'Sin registros'}</div></div><span class="muted">›</span></div>`; }).join('') || `<div class="empty small">Sin ejercicios. Pulsa ✎ para añadirlos.</div>`}</div>
+    </div>`).join('');
+}
+function viewRutinaEdit(r) {
+  return `<div class="card tight"><label class="f" style="margin-top:0">Nombre de la rutina</label><input value="${esc(r.nombre)}" onchange="A._rn('${r.id}',this.value)"></div>
+    ${r.dias.map((d, di) => `<div class="card" id="day-${d.id}">
+      <div class="row" style="gap:6px"><input value="${esc(d.nombre)}" onchange="A._dn('${r.id}','${d.id}',this.value)"><button class="btn icon" title="Subir día" onclick="A._dmove('${r.id}',${di},-1)">↑</button><button class="btn icon" title="Bajar día" onclick="A._dmove('${r.id}',${di},1)">↓</button><button class="btn icon danger" title="Eliminar día" onclick="A._ddel('${r.id}','${d.id}')">✕</button></div>
+      <div class="xs muted" style="margin-top:6px">${d.ejercicios.length} ejercicio${d.ejercicios.length === 1 ? '' : 's'}</div>
+      <div class="list">${d.ejercicios.map((e, ei) => `<div class="li"><div class="grow" onclick="A._eedit('${r.id}','${d.id}','${e.id}')"><div class="b small">${esc(e.nombre)} ${e.tecnica ? `<span class="tag">${esc(e.tecnica)}</span>` : ''}</div>${e.notas ? `<div class="xs muted">${esc(e.notas)}</div>` : ''}</div><div class="row" style="gap:4px;flex:none"><button class="btn xs" title="Subir" onclick="A._emove('${r.id}','${d.id}',${ei},-1)">↑</button><button class="btn xs" title="Bajar" onclick="A._emove('${r.id}','${d.id}',${ei},1)">↓</button><button class="btn xs" title="Cambiar ejercicio" onclick="A._eedit('${r.id}','${d.id}','${e.id}')">✎</button><button class="btn xs danger" title="Quitar" onclick="A._edel('${r.id}','${d.id}','${e.id}')">✕</button></div></div>`).join('')}</div>
+      <button class="btn sm block soft" style="margin-top:6px" onclick="A._eadd('${r.id}','${d.id}')">+ Añadir ejercicio</button>
     </div>`).join('')}
-    <div class="card tight"><div class="row between"><div><b>Rutinas</b><div class="sub">Crea, duplica o edita rutinas y ejercicios</div></div><div class="row"><button class="btn sm" onclick="A.nuevaRutina()">+ Nueva</button><button class="btn sm" onclick="A.duplicarRutina('${r.id}')">Duplicar</button></div></div></div>`;
+    <button class="btn block" onclick="A._dadd('${r.id}')">+ Añadir día</button>
+    <div class="row" style="margin-top:10px">${S.rutinas.length > 1 ? `<button class="btn block danger" onclick="A._rdel('${r.id}')">Eliminar rutina</button>` : ''}<button class="btn block primary" onclick="A.rutEdit(false)">✓ Terminar edición</button></div>`;
 }
 A.setRutina = (id) => { S.settings.rutinaActiva = id; save(); render(); };
 A.setFase = (f) => { S.settings.fase = f; save(); render(); };
 
-/* ---- Edición de rutinas ---- */
-A.nuevaRutina = () => promptBox('Nueva rutina', [{ k: 'nombre', label: 'Nombre', value: 'Rutina 3' }, { k: 'dias', label: 'Nº de días', type: 'number', value: 4 }], (o) => { const r = { id: uid('r'), nombre: o.nombre || 'Rutina', dias: [] }; for (let i = 1; i <= (o.dias || 1); i++) r.dias.push({ id: uid('d'), nombre: `Día ${i}`, ejercicios: [] }); S.rutinas.push(r); S.settings.rutinaActiva = r.id; save(); render(); A.editarRutina(r.id); });
-A.duplicarRutina = (id) => { const r = S.rutinas.find((x) => x.id === id); const c = JSON.parse(JSON.stringify(r)); c.id = uid('r'); c.nombre = r.nombre + ' (copia)'; c.dias.forEach((d) => { d.id = uid('d'); d.ejercicios.forEach((e) => { e.id = uid('ex'); }); }); S.rutinas.push(c); S.settings.rutinaActiva = c.id; save(); render(); toast('Rutina duplicada'); };
-A.editarRutina = (id) => {
-  const r = S.rutinas.find((x) => x.id === id);
-  const html = () => `<div class="row between"><h2>Editar rutina</h2><button class="btn sm" onclick="closeModal()">Cerrar</button></div>
-    <label class="f">Nombre</label><input value="${esc(r.nombre)}" onchange="A._rn('${r.id}',this.value)">
-    ${r.dias.map((d, di) => `<div class="card tight" style="margin-top:10px">
-      <div class="row"><input value="${esc(d.nombre)}" onchange="A._dn('${r.id}','${d.id}',this.value)"><button class="btn icon" onclick="A._dmove('${r.id}',${di},-1)">↑</button><button class="btn icon" onclick="A._dmove('${r.id}',${di},1)">↓</button><button class="btn icon danger" onclick="A._ddel('${r.id}','${d.id}')">✕</button></div>
-      <div class="list" style="margin-top:6px">${d.ejercicios.map((e, ei) => `<div class="li"><div class="grow"><div class="b small">${esc(e.nombre)} ${e.tecnica ? `<span class="tag">${esc(e.tecnica)}</span>` : ''}</div>${e.notas ? `<div class="xs muted">${esc(e.notas)}</div>` : ''}</div><button class="btn xs" onclick="A._emove('${r.id}','${d.id}',${ei},-1)">↑</button><button class="btn xs" onclick="A._emove('${r.id}','${d.id}',${ei},1)">↓</button><button class="btn xs" onclick="A._eedit('${r.id}','${d.id}','${e.id}')">✎</button><button class="btn xs danger" onclick="A._edel('${r.id}','${d.id}','${e.id}')">✕</button></div>`).join('')}</div>
-      <button class="btn sm block" style="margin-top:6px" onclick="A._eadd('${r.id}','${d.id}')">+ Añadir ejercicio</button>
-    </div>`).join('')}
-    <div class="row" style="margin-top:10px"><button class="btn block" onclick="A._dadd('${r.id}')">+ Añadir día</button>${S.rutinas.length > 1 ? `<button class="btn block danger" onclick="A._rdel('${r.id}')">Eliminar rutina</button>` : ''}</div>`;
-  openModal(html());
-  A._refreshEdit = () => { const m = document.querySelector('#modal .modal'); if (m) { const sc = m.scrollTop; m.innerHTML = '<div class="drag"></div>' + html(); m.scrollTop = sc; } save(); };
-};
+/* ---- Edición de rutinas (en la propia pantalla de Entreno) ---- */
+const EJ_COMUNES = ['Press banca con barra', 'Press banca con mancuernas', 'Press inclinado con barra', 'Press inclinado con mancuernas', 'Press declinado', 'Press en máquina de pecho', 'Aperturas con mancuernas', 'Aperturas en máquina (peck deck)', 'Cruce de poleas', 'Fondos en paralelas', 'Flexiones', 'Press militar con barra', 'Press de hombro con mancuernas', 'Press de hombro en máquina', 'Elevaciones laterales con mancuernas', 'Elevaciones laterales en polea', 'Elevaciones frontales', 'Pájaros con mancuernas', 'Pájaros en máquina', 'Face pull', 'Remo al mentón', 'Encogimientos de trapecio', 'Dominadas', 'Dominadas supinas', 'Jalón al pecho', 'Jalón agarre neutro', 'Remo con barra', 'Remo con mancuerna', 'Remo en polea baja (gironda)', 'Remo en máquina', 'Remo en T', 'Pullover en polea', 'Peso muerto', 'Peso muerto rumano', 'Hiperextensiones', 'Curl de bíceps con barra', 'Curl de bíceps con mancuernas', 'Curl martillo', 'Curl en banco Scott', 'Curl en polea', 'Curl inclinado con mancuernas', 'Curl concentrado', 'Extensión de tríceps en polea', 'Extensión de tríceps con cuerda', 'Press francés', 'Extensión de tríceps sobre la cabeza', 'Press cerrado', 'Patada de tríceps', 'Sentadilla con barra', 'Sentadilla en multipower', 'Sentadilla hack', 'Sentadilla búlgara', 'Prensa de piernas', 'Extensión de cuádriceps', 'Zancadas', 'Curl femoral tumbado', 'Curl femoral sentado', 'Hip thrust', 'Patada de glúteo en polea', 'Abductores en máquina', 'Aductores en máquina', 'Gemelo de pie', 'Gemelo sentado', 'Gemelo en prensa', 'Crunch abdominal', 'Crunch en polea', 'Elevación de piernas colgado', 'Plancha', 'Rueda abdominal'];
+const _ejNombres = () => [...new Set([...S.rutinas.flatMap((r) => r.dias.flatMap((d) => d.ejercicios.map((e) => e.nombre))), ...EJ_COMUNES])].sort((a, b) => a.localeCompare(b, 'es'));
+const _ejPorNombre = (n, exceptoId) => S.rutinas.flatMap((r) => r.dias.flatMap((d) => d.ejercicios)).find((e) => e.id !== exceptoId && e.nombre.trim().toLowerCase() === n.trim().toLowerCase());
+A.rutEdit = (on) => { SUB.rutEdit = !!on; render(); };
+A.editarRutina = (id, diaId) => { if (id) S.settings.rutinaActiva = id; SUB.rutEdit = true; render(); const el = diaId && document.getElementById('day-' + diaId); if (el) el.scrollIntoView({ block: 'start' }); };
+A._refreshEdit = () => { save(); render(); };
+A.nuevaRutina = () => promptBox('Nueva rutina', [{ k: 'nombre', label: 'Nombre', value: `Rutina ${S.rutinas.length + 1}` }, { k: 'dias', label: 'Nº de días de entreno', type: 'number', value: 4 }], (o) => { const r = { id: uid('r'), nombre: o.nombre || 'Rutina', dias: [] }; const n = clamp(Math.round(o.dias || 1), 1, 14); for (let i = 1; i <= n; i++) r.dias.push({ id: uid('d'), nombre: `Día ${i}`, ejercicios: [] }); S.rutinas.push(r); S.settings.rutinaActiva = r.id; SUB.rutEdit = true; save(); render(); window.scrollTo(0, 0); toast('Rutina creada: añade los ejercicios'); }, 'Crear');
+A.duplicarRutina = (id) => { const r = S.rutinas.find((x) => x.id === id); const c = JSON.parse(JSON.stringify(r)); c.id = uid('r'); c.nombre = r.nombre + ' (copia)'; c.dias.forEach((d) => { d.id = uid('d'); }); S.rutinas.push(c); S.settings.rutinaActiva = c.id; save(); render(); toast('Rutina duplicada'); };
 const _r = (id) => S.rutinas.find((x) => x.id === id);
 const _d = (rid, did) => _r(rid).dias.find((d) => d.id === did);
-A._rn = (rid, v) => { _r(rid).nombre = v; save(); };
-A._dn = (rid, did, v) => { _d(rid, did).nombre = v; save(); };
+A._rn = (rid, v) => { if (v.trim()) _r(rid).nombre = v.trim(); save(); render(); };
+A._dn = (rid, did, v) => { if (v.trim()) _d(rid, did).nombre = v.trim(); save(); };
 A._dadd = (rid) => { const r = _r(rid); r.dias.push({ id: uid('d'), nombre: `Día ${r.dias.length + 1}`, ejercicios: [] }); A._refreshEdit(); };
-A._ddel = (rid, did) => confirmBox('¿Eliminar este día y sus ejercicios?', () => { const r = _r(rid); r.dias = r.dias.filter((d) => d.id !== did); A.editarRutina(rid); save(); render(); }, true);
+A._ddel = (rid, did) => confirmBox('¿Eliminar este día y sus ejercicios?', () => { const r = _r(rid); r.dias = r.dias.filter((d) => d.id !== did); A._refreshEdit(); }, true);
 A._dmove = (rid, i, dir) => { const r = _r(rid); const j = i + dir; if (j < 0 || j >= r.dias.length) return;[r.dias[i], r.dias[j]] = [r.dias[j], r.dias[i]]; A._refreshEdit(); };
 A._emove = (rid, did, i, dir) => { const d = _d(rid, did); const j = i + dir; if (j < 0 || j >= d.ejercicios.length) return;[d.ejercicios[i], d.ejercicios[j]] = [d.ejercicios[j], d.ejercicios[i]]; A._refreshEdit(); };
-A._edel = (rid, did, eid) => { const d = _d(rid, did); d.ejercicios = d.ejercicios.filter((e) => e.id !== eid); A._refreshEdit(); };
-A._rdel = (rid) => confirmBox('¿Eliminar la rutina completa? (las sesiones registradas se conservan)', () => { S.rutinas = S.rutinas.filter((r) => r.id !== rid); S.settings.rutinaActiva = S.rutinas[0].id; closeModal(); save(); render(); }, true);
+A._edel = (rid, did, eid) => { const d = _d(rid, did); const e = d.ejercicios.find((x) => x.id === eid); confirmBox(`¿Quitar "${e?.nombre || 'ejercicio'}" de este día? (su historial se conserva)`, () => { d.ejercicios = d.ejercicios.filter((x) => x.id !== eid); A._refreshEdit(); }, true); };
+A._rdel = (rid) => confirmBox('¿Eliminar la rutina completa? (las sesiones registradas se conservan)', () => { S.rutinas = S.rutinas.filter((r) => r.id !== rid); S.settings.rutinaActiva = S.rutinas[0].id; SUB.rutEdit = false; save(); render(); }, true);
 const TEC_OPTS = [{ v: '', l: 'Ninguna' }, { v: 'DS', l: 'DS · Drop set' }, { v: 'RP', l: 'RP · Rest pause' }, { v: 'CL', l: 'CL · Cluster 5x5' }, { v: 'SS1', l: 'SS1 · Superserie 1' }, { v: 'SS2', l: 'SS2 · Superserie 2' }, { v: 'PP', l: 'PP · Pulso & parada' }];
 A._eadd = (rid, did) => {
-  const todos = [...new Set(S.rutinas.flatMap((r) => r.dias.flatMap((d) => d.ejercicios.map((e) => e.nombre))))].sort();
-  openModal(`<h2>Añadir ejercicio</h2><label class="f">Nombre</label><input id="ne-n" list="ne-list" placeholder="p. ej. Press inclinado en multipower"><datalist id="ne-list">${todos.map((n) => `<option value="${esc(n)}">`).join('')}</datalist>
-  <label class="f">Técnica de intensidad</label><select id="ne-t">${TEC_OPTS.map((o) => `<option value="${o.v}">${o.l}</option>`).join('')}</select>
-  <label class="f">Notas (agarre, cadencia, sustituto…)</label><input id="ne-no" placeholder="opcional">
-  <div class="spacer"></div><div class="row"><button class="btn block" onclick="A.editarRutina('${rid}')">Cancelar</button><button class="btn block primary" id="ne-ok">Añadir</button></div>`, (m) => {
-    m.querySelector('#ne-ok').onclick = () => { const n = m.querySelector('#ne-n').value.trim(); if (!n) return; const t = m.querySelector('#ne-t').value; const no = m.querySelector('#ne-no').value.trim(); const ex = S.rutinas.flatMap((r) => r.dias.flatMap((d) => d.ejercicios)).find((e) => e.nombre === n); _d(rid, did).ejercicios.push({ id: ex ? ex.id : uid('ex'), nombre: n, tecnica: t, notas: no, ref: ex?.ref || null }); save(); A.editarRutina(rid); A._refreshEdit(); };
-    setTimeout(() => m.querySelector('#ne-n').focus(), 50);
-  });
+  promptBox('Añadir ejercicio', [{ k: 'nombre', label: 'Ejercicio (escribe o elige de la lista)', value: '', ph: 'p. ej. Press inclinado en multipower', list: _ejNombres() }, { k: 'tecnica', label: 'Técnica de intensidad', type: 'select', value: '', opts: TEC_OPTS }, { k: 'notas', label: 'Notas (agarre, cadencia…)', value: '', ph: 'opcional' }], (o) => {
+    const n = (o.nombre || '').trim(); if (!n) { toast('Escribe el nombre del ejercicio'); return; }
+    const ex = _ejPorNombre(n);
+    _d(rid, did).ejercicios.push({ id: ex ? ex.id : uid('ex'), nombre: ex ? ex.nombre : n, tecnica: o.tecnica, notas: (o.notas || '').trim(), ref: ex?.ref || null });
+    A._refreshEdit();
+  }, 'Añadir');
 };
 A._eedit = (rid, did, eid) => {
-  const e = _d(rid, did).ejercicios.find((x) => x.id === eid);
-  promptBox('Editar ejercicio', [{ k: 'nombre', label: 'Nombre', value: e.nombre }, { k: 'tecnica', label: 'Técnica', type: 'select', value: e.tecnica, opts: TEC_OPTS }, { k: 'notas', label: 'Notas', value: e.notas }], (o) => { if (o.nombre) e.nombre = o.nombre; e.tecnica = o.tecnica; e.notas = o.notas; save(); A.editarRutina(rid); });
+  const e = _d(rid, did).ejercicios.find((x) => x.id === eid); if (!e) return;
+  promptBox('Cambiar ejercicio', [{ k: 'nombre', label: 'Ejercicio (escribe o elige de la lista)', value: e.nombre, list: _ejNombres() }, { k: 'tecnica', label: 'Técnica de intensidad', type: 'select', value: e.tecnica, opts: TEC_OPTS }, { k: 'notas', label: 'Notas', value: e.notas }, { k: 'modo', label: 'Si cambias el nombre…', type: 'select', value: 'otro', opts: [{ v: 'otro', l: 'Es otro ejercicio (historial aparte)' }, { v: 'mismo', l: 'Es el mismo, solo corrijo el nombre' }] }], (o) => {
+    const n = (o.nombre || '').trim();
+    if (n && n.toLowerCase() !== e.nombre.trim().toLowerCase()) {
+      const ex = _ejPorNombre(n, e.id);
+      if (ex) { e.id = ex.id; e.nombre = ex.nombre; e.ref = ex.ref || null; }
+      else if (o.modo === 'otro') { e.id = uid('ex'); e.nombre = n; e.ref = null; }
+      else { S.rutinas.forEach((r) => r.dias.forEach((d) => d.ejercicios.forEach((x) => { if (x.id === e.id) x.nombre = n; }))); }
+    } else if (n) e.nombre = n;
+    e.tecnica = o.tecnica; e.notas = (o.notas || '').trim();
+    A._refreshEdit();
+  });
 };
 
 /* ---- Sesión de entreno ---- */
@@ -1116,21 +1142,24 @@ function viewEjercicio(ejId) {
 
 /* ====== VISTA: DIETA ====== */
 function viewDieta() {
-  const sub = SUB.dieta || 'plan';
-  if (sub === 'alimentos') return viewAlimentos();
-  return viewPlan();
+  const sub = SUB.dieta === 'alimentos' ? 'alimentos' : 'plan';
+  return `<h1 style="margin-bottom:12px">Dieta</h1>
+    <div class="seg" style="margin-bottom:12px"><button class="${sub === 'plan' ? 'active' : ''}" onclick="A.go('dieta','plan')">Mi dieta</button><button class="${sub === 'alimentos' ? 'active' : ''}" onclick="A.go('dieta','alimentos')">Alimentos y supermercados</button></div>` +
+    (sub === 'alimentos' ? viewAlimentos() : viewPlan());
 }
 function fmtCant(al, cant) { if (!al) return ''; return al.u === 'ud' ? `${n1(cant, 1)} ud (${Math.round(cant * al.gUd)} g)` : `${n1(cant, 0)} g`; }
 function macroLine(m) { return `<div class="macro-line"><span><b>${Math.round(m.kcal)}</b> kcal</span><span class="mp">P ${Math.round(m.p)}</span><span class="mc">C ${Math.round(m.c)}</span><span class="mf">G ${Math.round(m.f)}</span></div>`; }
+function alNom(al) { return al ? esc(al.nombre) + (al.marca ? ` <span class="muted" style="font-weight:400">· ${esc(al.marca)}</span>` : '') : '<span class="muted">(sin alimento)</span>'; }
+function al100(al) { return `${n1(al.kcal, 0)} kcal · P ${n1(al.p)} · C ${n1(al.c)} · G ${n1(al.f)} / 100 g${al.u === 'ud' ? ` · 1 ud = ${al.gUd} g` : ''}`; }
+function defCant(al) { return al.u === 'ud' ? 1 : (al.porcion > 0 ? Math.round(al.porcion) : 100); }
 
 function viewPlan() {
   const d = dietaActiva(); const de = S.settings.diaEntreno;
   const tot = macrosDieta(d, de);
   const obj = S.settings.usarObjetivoManual ? S.settings.objetivoMacros : null;
   const peso = ultimoPeso()?.kg || 91.5;
-  return setHeader('Dieta', `<button class="btn sm" onclick="A.go('dieta','alimentos')">Alimentos</button>`) +
-    `<div class="card tight">
-      <div class="row"><select onchange="A.setDieta(this.value)">${S.dietas.map((x) => `<option value="${x.id}" ${x.id === d.id ? 'selected' : ''}>${esc(x.nombre)}</option>`).join('')}</select><button class="btn icon" onclick="A.dietaMenu('${d.id}')">⋯</button></div>
+  return `<div class="card tight">
+      <div class="row"><select onchange="A.setDieta(this.value)">${S.dietas.map((x) => `<option value="${x.id}" ${x.id === d.id ? 'selected' : ''}>${esc(x.nombre)}</option>`).join('')}</select><button class="btn icon" title="Opciones de la dieta" onclick="A.dietaMenu('${d.id}')">⋯</button></div>
       <div class="seg" style="margin-top:8px"><button class="${de ? 'active' : ''}" onclick="A.setDiaEntreno(true)">Día de entreno</button><button class="${!de ? 'active' : ''}" onclick="A.setDiaEntreno(false)">Día de descanso</button></div>
     </div>
     <div class="card">
@@ -1139,12 +1168,13 @@ function viewPlan() {
       <div class="xs muted" style="margin-top:6px">${n1(tot.p / peso, 2)} g/kg proteína · ${n1(tot.c / peso, 2)} g/kg carbos · ${n1(tot.f / peso, 2)} g/kg grasa (sobre ${n1(peso, 1)} kg)</div>
     </div>
     ${d.comidas.map((c, ci) => { const mc = macrosComida(c, de); return `<div class="card">
-      <div class="row between"><div><h2>${esc(c.nombre)}</h2><div class="xs muted">${esc(c.hora)}${c.nota ? ' · ' + esc(c.nota) : ''}</div></div><div class="row" style="gap:4px"><button class="btn xs" onclick="A.comidaEdit('${d.id}','${c.id}')">✎</button><button class="btn xs" onclick="A.comidaMove('${d.id}',${ci},-1)">↑</button><button class="btn xs" onclick="A.comidaMove('${d.id}',${ci},1)">↓</button></div></div>
-      <div class="list" style="margin-top:4px">${c.items.map((it) => { const o = it.opciones[it.sel] || it.opciones[0]; const al = o && alimentoById(o.al); const cant = cantidadItem(it, de); const m = macrosItem(it, de); return `<div class="li" style="align-items:flex-start">
-        <div class="grow" onclick="A.itemElegir('${d.id}','${c.id}','${it.id}')"><div class="b small">${al ? esc(al.nombre) : '<span class="muted">(sin alimento)</span>'} ${it.opciones.length > 1 ? `<span class="pill gray">${it.opciones.length} opciones ▾</span>` : ''}</div>${it.nota ? `<div class="xs muted">${esc(it.nota)}</div>` : ''}${macroLine(m)}</div>
+      <div class="row between"><div><h2>${esc(c.nombre)}</h2><div class="xs muted">${esc(c.hora)}${c.nota ? ' · ' + esc(c.nota) : ''}</div></div><div class="row" style="gap:4px"><button class="btn xs" title="Editar comida" onclick="A.comidaEdit('${d.id}','${c.id}')">✎</button><button class="btn xs" onclick="A.comidaMove('${d.id}',${ci},-1)">↑</button><button class="btn xs" onclick="A.comidaMove('${d.id}',${ci},1)">↓</button></div></div>
+      <div class="small b" style="margin-top:4px">${Math.round(mc.kcal)} kcal · <span style="color:var(--p)">P ${Math.round(mc.p)}</span> · <span style="color:var(--c)">C ${Math.round(mc.c)}</span> · <span style="color:var(--f)">G ${Math.round(mc.f)}</span></div>
+      <div class="list" style="margin-top:4px">${c.items.map((it) => { const o = it.opciones[it.sel] || it.opciones[0]; const al = o && alimentoById(o.al); const cant = cantidadItem(it, de); const m = macrosItem(it, de); const ns = it.opciones.length - 1; return `<div class="li" style="align-items:flex-start">
+        <div class="grow" onclick="A.itemEdit('${d.id}','${c.id}','${it.id}')"><div class="b small">${alNom(al)}</div>${macroLine(m)}<div class="xs lnk">${ns > 0 ? `⇄ ${ns} sustituto${ns > 1 ? 's' : ''} · cambiar` : '⇄ sustitutos · editar'}</div>${it.nota ? `<div class="xs muted">${esc(it.nota)}</div>` : ''}</div>
         <div style="width:92px;flex:none"><div class="row" style="gap:4px"><input type="number" inputmode="decimal" step="any" value="${cant}" style="padding:6px;text-align:center;font-weight:700" onchange="A.itemCant('${d.id}','${c.id}','${it.id}',this.value)"><span class="xs muted">${al?.u === 'ud' ? 'ud' : 'g'}</span></div><div class="xs muted center">${al?.u === 'ud' ? Math.round(cant * al.gUd) + ' g' : ''}</div></div>
-      </div>`; }).join('')}</div>
-      <div class="row between" style="margin-top:8px"><button class="btn xs" onclick="A.itemAdd('${d.id}','${c.id}')">+ alimento</button><div class="small b">${Math.round(mc.kcal)} kcal · <span style="color:var(--p)">P${Math.round(mc.p)}</span> <span style="color:var(--c)">C${Math.round(mc.c)}</span> <span style="color:var(--f)">G${Math.round(mc.f)}</span></div></div>
+      </div>`; }).join('') || `<div class="empty small">Comida vacía</div>`}</div>
+      <div class="row" style="margin-top:8px;gap:6px"><button class="btn sm soft grow" onclick="A.itemAdd('${d.id}','${c.id}')">+ Añadir alimento</button><button class="btn sm" onclick="A.itemAdd('${d.id}','${c.id}',true)">📷 Escanear</button></div>
     </div>`; }).join('')}
     <button class="btn block" onclick="A.comidaAdd('${d.id}')">+ Añadir comida</button>
     <div class="card" style="margin-top:12px"><div class="row between"><h2>Suplementación y cardio</h2><button class="btn xs" onclick="A.suplEdit('${d.id}')">✎</button></div>
@@ -1168,43 +1198,63 @@ A.dietaMenu = (id) => {
 };
 A.dietaRenombrar = (id) => promptBox('Renombrar dieta', [{ k: 'n', label: 'Nombre', value: _dt(id).nombre }], (o) => { if (o.n) _dt(id).nombre = o.n; save(); render(); });
 A.dietaDuplicar = (id) => { const c = JSON.parse(JSON.stringify(_dt(id))); c.id = uid('dieta'); c.nombre += ' (copia)'; c.comidas.forEach((cm) => { cm.id = uid('c'); cm.items.forEach((i) => i.id = uid('it')); }); S.dietas.push(c); S.settings.dietaActiva = c.id; save(); render(); toast('Dieta duplicada'); };
-A.dietaNueva = () => promptBox('Nueva dieta', [{ k: 'n', label: 'Nombre', value: 'Dieta nueva' }], (o) => { const c = { id: uid('dieta'), nombre: o.n || 'Dieta', comidas: [], suplementos: [], cardio: '', detalles: [] }; S.dietas.push(c); S.settings.dietaActiva = c.id; save(); render(); });
+A.dietaNueva = () => promptBox('Nueva dieta', [{ k: 'n', label: 'Nombre', value: 'Dieta nueva' }, { k: 'nc', label: 'Nº de comidas', type: 'number', value: 4 }], (o) => { const c = { id: uid('dieta'), nombre: o.n || 'Dieta', comidas: [], suplementos: [], cardio: '', detalles: [] }; const n = clamp(Math.round(o.nc || 0), 0, 10); for (let i = 1; i <= n; i++) c.comidas.push({ id: uid('c'), nombre: `Comida ${i}`, hora: '—', items: [], nota: '' }); S.dietas.push(c); S.settings.dietaActiva = c.id; save(); render(); }, 'Crear');
 A.dietaBorrar = (id) => confirmBox('¿Eliminar esta dieta?', () => { S.dietas = S.dietas.filter((d) => d.id !== id); S.settings.dietaActiva = S.dietas[0].id; save(); render(); }, true);
 A.comidaAdd = (did) => promptBox('Nueva comida', [{ k: 'n', label: 'Nombre', value: `Comida ${_dt(did).comidas.length + 1}` }, { k: 'h', label: 'Hora', type: 'time', value: '' }], (o) => { _dt(did).comidas.push({ id: uid('c'), nombre: o.n || 'Comida', hora: o.h || '—', items: [], nota: '' }); save(); render(); });
 A.comidaEdit = (did, cid) => { const c = _cm(did, cid); promptBox('Editar comida', [{ k: 'n', label: 'Nombre', value: c.nombre }, { k: 'h', label: 'Hora', value: c.hora }, { k: 'nota', label: 'Nota', value: c.nota }, { k: 'del', label: 'Eliminar comida', type: 'select', value: 'no', opts: [{ v: 'no', l: 'No' }, { v: 'si', l: 'Sí, eliminar' }] }], (o) => { if (o.del === 'si') { const d = _dt(did); d.comidas = d.comidas.filter((x) => x.id !== cid); } else { c.nombre = o.n || c.nombre; c.hora = o.h; c.nota = o.nota; } save(); render(); }); };
 A.comidaMove = (did, i, dir) => { const d = _dt(did); const j = i + dir; if (j < 0 || j >= d.comidas.length) return;[d.comidas[i], d.comidas[j]] = [d.comidas[j], d.comidas[i]]; save(); render(); };
 A.itemCant = (did, cid, iid, v) => { const it = _it(did, cid, iid); const o = it.opciones[it.sel] || it.opciones[0]; if (!o) return; const n = num(v) ?? 0; if (S.settings.diaEntreno) o.g = n; else o.gd = n; save(); render(); };
-A.itemElegir = (did, cid, iid) => {
-  const it = _it(did, cid, iid); const de = S.settings.diaEntreno;
-  const html = () => `<div class="row between"><h2>Elige opción</h2><button class="btn sm" onclick="closeModal();A.itemEdit('${did}','${cid}','${iid}')">✎ Editar opciones</button></div>
-    <div class="list">${it.opciones.map((o, i) => { const al = alimentoById(o.al); const cant = de ? o.g : (o.gd == null ? o.g : o.gd); const m = macrosDe(al, cant); return `<div class="opt ${it.sel === i ? 'sel' : ''}" onclick="A._itSel('${did}','${cid}','${iid}',${i})"><div class="r"></div><div class="grow"><div class="b small">${al ? esc(al.nombre) : '?'}</div><div class="xs muted">${fmtCant(al, cant)}${o.gd != null && o.gd !== o.g ? ` (descanso: ${fmtCant(al, o.gd)})` : ''}</div>${macroLine(m)}</div></div>`; }).join('')}</div>
-    ${it.nota ? `<div class="xs muted" style="margin-top:8px">${esc(it.nota)}</div>` : ''}`;
-  openModal(html());
+
+/* ---- Alimento del plan + sustitutos ---- */
+// Cantidad de `al` que aporta las mismas kcal que `kcal` (redondeada a 5 g o a media unidad)
+function cantEquivalente(al, kcal) {
+  if (!al || !(al.kcal > 0) || !(kcal > 0)) return defCant(al);
+  const g = kcal / (al.kcal / 100);
+  if (al.u === 'ud') return al.gUd > 0 ? Math.max(0.5, Math.round(g / al.gUd * 2) / 2) : 1;
+  return Math.max(5, Math.round(g / 5) * 5);
+}
+A.itemAdd = (did, cid, escanear) => {
+  const c = _cm(did, cid);
+  A.pickAlimento({ title: `Añadir a ${c.nombre}`, cb: (al) => { const it = { id: uid('it'), opciones: [{ al: al.id, g: defCant(al), gd: null }], sel: 0, nota: '' }; c.items.push(it); save(); render(); A.itemEdit(did, cid, it.id); } });
+  if (escanear) A.escanear();
 };
-A._itSel = (did, cid, iid, i) => { _it(did, cid, iid).sel = i; save(); closeModal(); render(); };
-A.itemAdd = (did, cid) => { const it = { id: uid('it'), opciones: [], sel: 0, nota: '' }; _cm(did, cid).items.push(it); save(); A.itemEdit(did, cid, it.id, true); };
-A.itemEdit = (did, cid, iid, nuevo) => {
-  const it = _it(did, cid, iid);
-  const cats = [...new Set(S.alimentos.map((a) => a.cat))];
-  const selAl = (v, idx) => `<select onchange="A._opAl('${did}','${cid}','${iid}',${idx},this.value)">${cats.map((c) => `<optgroup label="${esc(c)}">${S.alimentos.filter((a) => a.cat === c).map((a) => `<option value="${a.id}" ${a.id === v ? 'selected' : ''}>${esc(a.nombre)}</option>`).join('')}</optgroup>`).join('')}</select>`;
-  const html = () => `<div class="row between"><h2>Alimento del plan</h2><button class="btn sm primary" onclick="closeModal();render()">Listo</button></div>
-    <div class="sub">Cada opción es una alternativa intercambiable (p. ej. “80 g avena o 80 g crema de arroz”). Indica la cantidad en día de entreno y, si cambia, en día de descanso.</div>
-    ${it.opciones.map((o, i) => { const al = alimentoById(o.al); return `<div class="card tight" style="margin-top:8px"><div class="row"><div class="grow">${selAl(o.al, i)}</div><button class="btn icon danger" onclick="A._opDel('${did}','${cid}','${iid}',${i})">✕</button></div>
-      <div class="grid2" style="margin-top:6px"><div><label class="f" style="margin-top:0">Entreno (${al?.u === 'ud' ? 'ud' : 'g'})</label><input type="number" inputmode="decimal" step="any" value="${o.g}" onchange="A._opG('${did}','${cid}','${iid}',${i},'g',this.value)"></div><div><label class="f" style="margin-top:0">Descanso (${al?.u === 'ud' ? 'ud' : 'g'})</label><input type="number" inputmode="decimal" step="any" value="${o.gd ?? ''}" placeholder="igual" onchange="A._opG('${did}','${cid}','${iid}',${i},'gd',this.value)"></div></div>
-      <div class="xs muted" style="margin-top:4px">${al ? `${al.kcal} kcal · P ${al.p} · C ${al.c} · G ${al.f} por 100 g${al.u === 'ud' ? ` (1 ud = ${al.gUd} g)` : ''}` : ''}</div></div>`; }).join('')}
-    <div class="row" style="margin-top:10px"><button class="btn block" onclick="A._opAdd('${did}','${cid}','${iid}')">+ Opción alternativa</button><button class="btn block" onclick="closeModal();A.alimentoNuevo(function(){A.itemEdit('${did}','${cid}','${iid}')})">+ Nuevo alimento</button></div>
+A.itemEdit = (did, cid, iid) => {
+  const it = _it(did, cid, iid); if (!it) return;
+  const de = S.settings.diaEntreno;
+  const html = () => `<div class="row between"><h2>Alimento y sustitutos</h2><button class="btn sm primary" onclick="closeModal()">Listo</button></div>
+    <div class="sub">Marca la opción que comes hoy. Los sustitutos son alternativas intercambiables (p. ej. avena ↔ crema de arroz) y los macros del día se recalculan con la que elijas.</div>
+    ${it.opciones.map((o, i) => { const al = alimentoById(o.al); const sel = (it.sel || 0) === i; const cant = de ? o.g : (o.gd == null ? o.g : o.gd); const u = al?.u === 'ud' ? 'ud' : 'g'; return `<div class="card tight" style="margin-top:8px;${sel ? 'border-color:var(--accent)' : ''}">
+      <div class="opt ${sel ? 'sel' : ''}" style="padding:0 0 6px" onclick="A._itSel('${did}','${cid}','${iid}',${i})"><div class="r"></div><div class="grow"><div class="b small">${alNom(al)} ${i === 0 ? '' : '<span class="pill gray">sustituto</span>'}</div><div class="xs muted">${al ? al100(al) : 'Este alimento ya no existe: cámbialo'}</div></div></div>
+      <div class="grid2"><div><label class="f" style="margin-top:0">Día de entreno (${u})</label><input type="number" inputmode="decimal" step="any" value="${o.g}" onchange="A._opG('${did}','${cid}','${iid}',${i},'g',this.value)"></div><div><label class="f" style="margin-top:0">Descanso (${u})</label><input type="number" inputmode="decimal" step="any" value="${o.gd ?? ''}" placeholder="igual" onchange="A._opG('${did}','${cid}','${iid}',${i},'gd',this.value)"></div></div>
+      <div class="row between" style="margin-top:6px">${macroLine(macrosDe(al, cant))}<div class="row" style="gap:4px"><button class="btn xs" onclick="A._opCambiar('${did}','${cid}','${iid}',${i})">Cambiar alimento</button>${it.opciones.length > 1 ? `<button class="btn xs danger" onclick="A._opDel('${did}','${cid}','${iid}',${i})">✕</button>` : ''}</div></div>
+    </div>`; }).join('')}
+    <button class="btn block soft" style="margin-top:10px" onclick="A._opAdd('${did}','${cid}','${iid}')">+ Añadir sustituto</button>
     <label class="f">Nota</label><input value="${esc(it.nota)}" onchange="A._itNota('${did}','${cid}','${iid}',this.value)" placeholder="p. ej. solo días de entreno">
-    <div class="row" style="margin-top:10px"><button class="btn block danger" onclick="A._itDel('${did}','${cid}','${iid}')">Quitar del plan</button></div>`;
+    <button class="btn block danger" style="margin-top:10px" onclick="A._itDel('${did}','${cid}','${iid}')">Quitar de la comida</button>`;
   openModal(html());
+  MODAL_CLOSE = () => render();
   A._refreshIt = () => { const m = document.querySelector('#modal .modal'); if (m) { const sc = m.scrollTop; m.innerHTML = '<div class="drag"></div>' + html(); m.scrollTop = sc; } save(); };
-  if (nuevo && !it.opciones.length) A._opAdd(did, cid, iid);
 };
-A._opAdd = (did, cid, iid) => { const it = _it(did, cid, iid); it.opciones.push({ al: it.opciones[0]?.al || S.alimentos[0].id, g: 100, gd: null }); A._refreshIt(); };
-A._opDel = (did, cid, iid, i) => { const it = _it(did, cid, iid); it.opciones.splice(i, 1); if (it.sel >= it.opciones.length) it.sel = 0; A._refreshIt(); };
-A._opAl = (did, cid, iid, i, v) => { const o = _it(did, cid, iid).opciones[i]; o.al = v; const al = alimentoById(v); if (al?.u === 'ud' && o.g > 20) { o.g = 1; o.gd = null; } A._refreshIt(); };
+A._itSel = (did, cid, iid, i) => { _it(did, cid, iid).sel = i; A._refreshIt(); };
+A._opAdd = (did, cid, iid) => {
+  const it = _it(did, cid, iid); const ref = it.opciones[it.sel] || it.opciones[0]; const refAl = ref && alimentoById(ref.al);
+  const volver = () => A.itemEdit(did, cid, iid);
+  A.pickAlimento({ title: refAl ? `Sustituto de ${refAl.nombre}` : 'Añadir sustituto', onCancel: volver, cb: (al) => {
+    if (it.opciones.some((o) => o.al === al.id)) { toast('Ese alimento ya está en la lista'); volver(); return; }
+    const g = ref ? cantEquivalente(al, macrosDe(refAl, ref.g).kcal) : defCant(al);
+    const gd = ref && ref.gd != null && ref.gd !== ref.g ? cantEquivalente(al, macrosDe(refAl, ref.gd).kcal) : null;
+    it.opciones.push({ al: al.id, g, gd }); save(); volver();
+    if (refAl) toast('Cantidad ajustada a las mismas kcal', 2400);
+  } });
+};
+A._opCambiar = (did, cid, iid, i) => {
+  const it = _it(did, cid, iid); const o = it.opciones[i]; const volver = () => A.itemEdit(did, cid, iid);
+  A.pickAlimento({ title: 'Cambiar alimento', onCancel: volver, cb: (al) => { const prev = alimentoById(o.al); if ((prev?.u || 'g') !== al.u) { o.g = defCant(al); o.gd = null; } o.al = al.id; save(); volver(); } });
+};
+A._opDel = (did, cid, iid, i) => { const it = _it(did, cid, iid); it.opciones.splice(i, 1); if (it.sel >= it.opciones.length) it.sel = 0; else if (it.sel > i) it.sel--; A._refreshIt(); };
 A._opG = (did, cid, iid, i, k, v) => { const o = _it(did, cid, iid).opciones[i]; const n = num(v); if (k === 'g') o.g = n ?? 0; else o.gd = n; A._refreshIt(); };
 A._itNota = (did, cid, iid, v) => { _it(did, cid, iid).nota = v; save(); };
-A._itDel = (did, cid, iid) => { const c = _cm(did, cid); c.items = c.items.filter((i) => i.id !== iid); closeModal(); save(); render(); };
+A._itDel = (did, cid, iid) => { const c = _cm(did, cid); c.items = c.items.filter((i) => i.id !== iid); save(); closeModal(); };
 A.suplEdit = (did) => { const d = _dt(did); promptBox('Suplementación, cardio y detalles', [{ k: 's', label: 'Suplementos (uno por línea)', type: 'textarea', value: (d.suplementos || []).join('\n') }, { k: 'c', label: 'Cardio', value: d.cardio || '' }, { k: 'd', label: 'Detalles (uno por línea)', type: 'textarea', value: (d.detalles || []).join('\n') }], (o) => { d.suplementos = o.s.split('\n').map((x) => x.trim()).filter(Boolean); d.cardio = o.c; d.detalles = o.d.split('\n').map((x) => x.trim()).filter(Boolean); save(); render(); }); };
 
 /* ---- Objetivo de macros ---- */
@@ -1221,20 +1271,232 @@ A.objetivoMacros = () => {
 };
 A._objSet = (k, p, c, f) => { const m = document.getElementById('modal'); m.querySelector('#ob-k').value = k; m.querySelector('#ob-p').value = p; m.querySelector('#ob-c').value = c; m.querySelector('#ob-f').value = f; m.querySelector('#ob-on').checked = true; };
 
-/* ---- Base de alimentos ---- */
-function viewAlimentos() {
-  const q = (SUB.dietaQ || '').toLowerCase();
-  const cats = [...new Set(S.alimentos.map((a) => a.cat))];
-  const lista = S.alimentos.filter((a) => !q || a.nombre.toLowerCase().includes(q) || a.cat.toLowerCase().includes(q));
-  return setHeader('Alimentos', `<button class="btn sm" onclick="A.go('dieta','plan')">← Dieta</button>`) +
-    `<div class="row" style="margin-bottom:10px"><input placeholder="Buscar alimento…" value="${esc(SUB.dietaQ || '')}" oninput="SUB.dietaQ=this.value;A._alRefresh()"><button class="btn primary" onclick="A.alimentoNuevo()">+ Nuevo</button></div>
-    <div class="sub" style="margin-bottom:8px">Valores por 100 g en crudo (o por unidad). Toca para editar. Los cambios se aplican a toda la dieta.</div>
-    <div id="al-list">${cats.map((c) => { const items = lista.filter((a) => a.cat === c); if (!items.length) return ''; return `<div class="xs muted b" style="margin:10px 0 4px">${esc(c).toUpperCase()}</div><div class="card tight"><div class="list">${items.map((a) => `<div class="li" onclick="A.alimentoEdit('${a.id}')"><div class="grow"><div class="b small">${esc(a.nombre)}</div><div class="xs muted">${a.kcal} kcal · P ${a.p} · C ${a.c} · G ${a.f} / 100 g${a.u === 'ud' ? ` · 1 ud = ${a.gUd} g` : ''}</div></div><span class="muted">›</span></div>`).join('')}</div></div>`; }).join('')}</div>`;
+/* ---- Buscador de alimentos: mis alimentos + supermercados (Open Food Facts) + escáner ---- */
+// f: filtros de Open Food Facts que se prueban en orden ([tipo de etiqueta, valor])
+const TIENDAS = [
+  { k: '', n: 'Todos' },
+  { k: 'mercadona', n: 'Mercadona', f: [['stores', 'mercadona'], ['brands', 'hacendado']] },
+  { k: 'lidl', n: 'Lidl', f: [['stores', 'lidl'], ['brands', 'milbona']] },
+  { k: 'spar', n: 'Spar', f: [['stores', 'spar'], ['brands', 'spar']] },
+  { k: 'esclat', n: 'Esclat / Bonpreu', f: [['brands', 'bonpreu'], ['stores', 'esclat'], ['stores', 'bonpreu']] },
+  { k: 'carrefour', n: 'Carrefour', f: [['stores', 'carrefour'], ['brands', 'carrefour']] },
+  { k: 'aldi', n: 'Aldi', f: [['stores', 'aldi']] },
+  { k: 'dia', n: 'Dia', f: [['stores', 'dia'], ['brands', 'dia']] },
+  { k: 'consum', n: 'Consum', f: [['stores', 'consum'], ['brands', 'consum']] },
+  { k: 'caprabo', n: 'Caprabo / Eroski', f: [['stores', 'caprabo'], ['brands', 'eroski']] },
+];
+const OFF_FIELDS = 'code,product_name,product_name_es,generic_name_es,brands,stores,quantity,serving_quantity,nutriments';
+const FS = { q: '', tab: 'mis', tienda: '', res: null, loading: false, err: '', modo: 'page', cb: null, onCancel: null, seq: 0, t: null };
+let VER = null; // alimento abierto en la ficha
+const norm = (s) => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+async function offGet(url) {
+  let last = null;
+  for (let i = 0; i < 2; i++) {
+    const ctl = new AbortController(); const t = setTimeout(() => ctl.abort(), 20000);
+    try { const r = await fetch(url, { signal: ctl.signal }); const txt = await r.text(); clearTimeout(t); return JSON.parse(txt); } catch (e) { clearTimeout(t); last = e; }
+    if (i === 0) await sleep(1500);
+  }
+  throw last || new Error('off');
 }
-A._alRefresh = () => { const el = document.getElementById('al-list'); if (!el) return; const tmp = document.createElement('div'); tmp.innerHTML = viewAlimentos(); el.innerHTML = tmp.querySelector('#al-list').innerHTML; };
-const AL_FIELDS = (a) => [{ k: 'nombre', label: 'Nombre', value: a?.nombre || '' }, { k: 'cat', label: 'Categoría', type: 'select', value: a?.cat || 'Proteína', opts: ['Carbohidrato', 'Proteína', 'Grasa', 'Lácteo/Bebida', 'Fruta', 'Verdura', 'Suplemento', 'Otro'].map((c) => ({ v: c, l: c })) }, { k: 'u', label: 'Unidad de medida', type: 'select', value: a?.u || 'g', opts: [{ v: 'g', l: 'Se pesa en gramos' }, { v: 'ud', l: 'Se cuenta por unidades' }] }, { k: 'gUd', label: 'Gramos por unidad (si es por unidad)', type: 'number', value: a?.gUd || '' }, { k: 'kcal', label: 'kcal por 100 g', type: 'number', value: a?.kcal ?? '' }, { k: 'p', label: 'Proteína (g)', type: 'number', value: a?.p ?? '' }, { k: 'c', label: 'Carbohidratos (g)', type: 'number', value: a?.c ?? '' }, { k: 'f', label: 'Grasa (g)', type: 'number', value: a?.f ?? '' }];
-A.alimentoNuevo = (cb) => promptBox('Nuevo alimento', AL_FIELDS(null), (o) => { if (!o.nombre) return; const al = { id: uid('al'), nombre: o.nombre, cat: o.cat, u: o.u, gUd: o.gUd || 0, kcal: o.kcal || 0, p: o.p || 0, c: o.c || 0, f: o.f || 0 }; S.alimentos.push(al); save(); toast('Alimento añadido'); if (cb) cb(); else render(); });
-A.alimentoEdit = (id) => { const a = alimentoById(id); openModal(''); promptBox('Editar alimento', AL_FIELDS(a), (o) => { Object.assign(a, { nombre: o.nombre || a.nombre, cat: o.cat, u: o.u, gUd: o.gUd || 0, kcal: o.kcal || 0, p: o.p || 0, c: o.c || 0, f: o.f || 0 }); save(); render(); }); const m = document.getElementById('modal'); const del = document.createElement('button'); del.className = 'btn block danger'; del.style.marginTop = '8px'; del.textContent = 'Eliminar alimento'; del.onclick = () => confirmBox('¿Eliminar este alimento? Si está en la dieta, quedará como opción vacía.', () => { S.alimentos = S.alimentos.filter((x) => x.id !== id); save(); render(); }, true); m.querySelector('.modal').appendChild(del); };
+function offSearch(q, filtro) {
+  let url = `https://es.openfoodfacts.org/cgi/search.pl?search_terms=${encodeURIComponent(q)}&search_simple=1&action=process&json=1&page_size=40&fields=${OFF_FIELDS}`;
+  if (filtro) url += `&tagtype_0=${filtro[0]}&tag_contains_0=contains&tag_0=${encodeURIComponent(filtro[1])}`;
+  return offGet(url).then((j) => j.products || []);
+}
+// Convierte un producto de Open Food Facts en un alimento de la app (valores por 100 g). null si no trae datos nutricionales.
+function offToAl(p) {
+  if (!p) return null;
+  const n = p.nutriments || {}; const v = (k) => { const x = parseFloat(n[k]); return isNaN(x) ? null : x; };
+  const P = v('proteins_100g'), C = v('carbohydrates_100g'), F = v('fat_100g');
+  let kcal = v('energy-kcal_100g'); if (kcal == null && v('energy_100g') != null) kcal = v('energy_100g') / 4.184;
+  if (kcal == null && P == null && C == null && F == null) return null;
+  if (kcal == null) kcal = (P || 0) * 4 + (C || 0) * 4 + (F || 0) * 9;
+  const nombre = String(p.product_name_es || p.product_name || p.generic_name_es || '').trim(); if (!nombre) return null;
+  const lista = (x) => (Array.isArray(x) ? x : String(x || '').split(',')).map((s) => String(s).trim()).filter(Boolean);
+  const r1 = (x) => Math.round((x || 0) * 10) / 10;
+  const e = { p: (P || 0) * 4, c: (C || 0) * 4, f: (F || 0) * 9 };
+  const cat = e.p >= e.c && e.p >= e.f ? 'Proteína' : e.c >= e.f ? 'Carbohidrato' : 'Grasa';
+  return { id: 'off_' + p.code, nombre: nombre.slice(0, 90), marca: lista(p.brands)[0] || '', tiendas: lista(p.stores).slice(0, 4).join(', '), envase: String(p.quantity || '').slice(0, 30), porcion: parseFloat(p.serving_quantity) || 0, codigo: String(p.code || ''), cat, u: 'g', gUd: 0, kcal: Math.round(kcal), p: r1(P), c: r1(C), f: r1(F), origen: 'off' };
+}
+// Guarda en "Mis alimentos" (si ya está, por id o código de barras, devuelve el existente)
+function guardarAl(al) {
+  if (S.alimentos.includes(al)) return al;
+  const ya = al.codigo && S.alimentos.find((a) => a.codigo === al.codigo); if (ya) return ya;
+  const n = { ...al, id: uid('al') }; S.alimentos.push(n); save(); return n;
+}
+function fsFila(al, onclick) {
+  const extra = [al.marca, al.tiendas].filter(Boolean).join(' · ');
+  return `<div class="li" onclick="${onclick}"><div class="grow"><div class="b small">${esc(al.nombre)}</div>${extra ? `<div class="xs muted">${esc(extra)}</div>` : ''}<div class="xs muted">${al100(al)}</div></div><span class="muted">›</span></div>`;
+}
+function fsHtml() {
+  return `<div class="row"><input id="fs-q" type="search" enterkeyhint="search" autocomplete="off" placeholder="Buscar alimento o marca…" value="${esc(FS.q)}" oninput="A.fsInput(this.value)" onkeydown="if(event.key==='Enter'){this.blur();A.fsEnter()}"><button class="btn primary" style="flex:none" title="Escanear código de barras" onclick="A.escanear()">📷 Escanear</button></div>
+    <div id="fs-body" style="margin-top:10px">${fsBody()}</div>`;
+}
+function fsBody() {
+  const q = FS.q.trim();
+  let h = `<div class="seg"><button class="${FS.tab === 'mis' ? 'active' : ''}" onclick="A.fsTab('mis')">Mis alimentos (${S.alimentos.length})</button><button class="${FS.tab === 'super' ? 'active' : ''}" onclick="A.fsTab('super')">Supermercados</button></div>`;
+  if (FS.tab === 'mis') {
+    const pal = norm(q).split(/\s+/).filter(Boolean);
+    const lista = S.alimentos.filter((a) => { const t = norm(a.nombre + ' ' + (a.marca || '') + ' ' + a.cat); return pal.every((w) => t.includes(w)); });
+    const cats = [...new Set(lista.map((a) => a.cat))];
+    h += cats.map((c) => `<div class="xs muted b" style="margin:10px 0 4px">${esc(c).toUpperCase()}</div><div class="card tight"><div class="list">${lista.filter((a) => a.cat === c).map((a) => fsFila(a, `A.fsPick('l','${a.id}')`)).join('')}</div></div>`).join('');
+    if (!lista.length) h += `<div class="empty small">No tienes ningún alimento guardado que coincida con «${esc(q)}».</div>`;
+    h += `${q ? `<button class="btn block soft" style="margin-top:10px" onclick="A.fsBuscar()">Buscar «${esc(q.slice(0, 24))}» en supermercados</button>` : ''}<button class="btn block" style="margin-top:8px" onclick="A.fsCrear()">+ Crear alimento a mano</button>`;
+    return h;
+  }
+  const t = TIENDAS.find((x) => x.k === FS.tienda) || TIENDAS[0];
+  h += `<div class="chips">${TIENDAS.map((x) => `<button class="chip ${x.k === FS.tienda ? 'on' : ''}" onclick="A.fsTienda('${x.k}')">${esc(x.n)}</button>`).join('')}</div>`;
+  if (FS.loading) h += `<div class="empty small">Buscando${t.k ? ' en ' + esc(t.n) : ''}…</div>`;
+  else if (FS.err) h += `<div class="alert">${esc(FS.err)} <button class="btn xs" onclick="A.fsBuscar()">Reintentar</button></div>`;
+  else if (FS.res == null) h += `<div class="empty small">Escribe un alimento o una marca (p. ej. «yogur proteínas», «pechuga pavo») y pulsa Buscar, elige un supermercado para ver sus productos, o escanea el código de barras del envase.<div class="spacer"></div><button class="btn primary" onclick="A.fsBuscar()">Buscar</button></div>`;
+  else if (!FS.res.length) h += `<div class="empty small">Sin resultados${q ? ` para «${esc(q)}»` : ''}${t.k ? ' en ' + esc(t.n) : ''}. Prueba con otra palabra, en «Todos», o escanea el código de barras.</div>`;
+  else h += `<div class="xs muted" style="margin:2px 0 4px">${FS.res.length} productos${t.k ? ' · ' + esc(t.n) : ''} · valores por 100 g</div><div class="card tight"><div class="list">${FS.res.map((a, i) => fsFila(a, `A.fsPick('o',${i})`)).join('')}</div></div>`;
+  h += `<div class="xs muted center" style="margin-top:8px">Datos de productos: Open Food Facts (base de datos abierta, ODbL). Necesita conexión. Comprueba siempre con la etiqueta.</div>`;
+  return h;
+}
+A.fsRefresh = () => { const el = document.getElementById('fs-body'); if (el) el.innerHTML = fsBody(); };
+A.fsInput = (v) => { FS.q = v; clearTimeout(FS.t); if (FS.tab === 'mis') A.fsRefresh(); else if (v.trim().length >= 3) FS.t = setTimeout(() => A.fsBuscar(), 900); };
+A.fsEnter = () => { clearTimeout(FS.t); if (FS.tab === 'super') A.fsBuscar(); };
+A.fsTab = (t) => { FS.tab = t; clearTimeout(FS.t); if (t === 'super' && FS.q.trim() && FS.res == null && !FS.loading) A.fsBuscar(); else A.fsRefresh(); };
+A.fsTienda = (k) => { FS.tienda = k; if (FS.q.trim() || k) A.fsBuscar(); else { FS.res = null; FS.err = ''; A.fsRefresh(); } };
+A.fsBuscar = async () => {
+  clearTimeout(FS.t); FS.tab = 'super';
+  const q = FS.q.trim(); const t = TIENDAS.find((x) => x.k === FS.tienda) || TIENDAS[0];
+  const seq = ++FS.seq;
+  if (!q && !t.k) { FS.loading = false; FS.err = ''; FS.res = null; A.fsRefresh(); toast('Escribe qué quieres buscar'); return; }
+  if (navigator.onLine === false) { FS.loading = false; FS.err = 'Sin conexión: la búsqueda en supermercados necesita internet. Tus alimentos guardados siguen disponibles.'; A.fsRefresh(); return; }
+  FS.loading = true; FS.err = ''; A.fsRefresh();
+  try {
+    const out = []; const seen = new Set();
+    for (const f of (t.f || [null])) {
+      const prods = await offSearch(q, f); if (seq !== FS.seq) return;
+      for (const p of prods) { const al = offToAl(p); if (!al || !al.codigo || seen.has(al.codigo)) continue; seen.add(al.codigo); out.push(al); }
+      if (out.length >= 15) break;
+    }
+    FS.res = out;
+  } catch (e) { if (seq !== FS.seq) return; FS.err = 'No se pudo consultar la base de datos de supermercados (sin conexión o servicio saturado).'; }
+  FS.loading = false; A.fsRefresh();
+};
+// Resultado elegido (de la lista o del escáner): en modo selector se añade a la dieta; en la pestaña Alimentos se abre su ficha
+function fsElegir(al) {
+  if (FS.modo === 'modal' && FS.cb) { const cb = FS.cb; FS.cb = null; FS.onCancel = null; closeModal(); cb(guardarAl(al)); } else A.alimentoVer(al);
+}
+A.fsPick = (tipo, ref) => { const al = tipo === 'l' ? alimentoById(ref) : FS.res?.[ref]; if (al) fsElegir(al); };
+A.fsCrear = (pre) => A.alimentoNuevo((al) => { if (FS.modo === 'modal' && FS.cb) fsElegir(al); else render(); }, pre || { nombre: FS.q.trim() });
+A.fsCancel = () => { const f = FS.onCancel; FS.cb = null; FS.onCancel = null; closeModal(); if (f) f(); };
+// Selector de alimento en ventana: o = { title, cb(alimentoGuardado), onCancel }
+A.pickAlimento = (o) => {
+  Object.assign(FS, { modo: 'modal', cb: o.cb, onCancel: o.onCancel || null, q: '', tab: 'mis', err: '' });
+  FS._o = o;
+  openModal(`<div class="row between"><h2>${esc(o.title || 'Elegir alimento')}</h2><button class="btn sm" onclick="A.fsCancel()">Cancelar</button></div><div style="min-height:62vh">${fsHtml()}</div>`);
+};
+function viewAlimentos() {
+  Object.assign(FS, { modo: 'page', cb: null, onCancel: null });
+  return `<div class="sub" style="margin-bottom:10px">Consulta las kcal y macros de cualquier producto: tus alimentos, los de Mercadona, Lidl, Spar, Esclat… o escaneando su código de barras. Desde su ficha puedes calcular una cantidad y añadirlo a tu dieta.</div>` + fsHtml();
+}
+
+/* ---- Ficha de alimento con calculadora ---- */
+A.alimentoVer = (al) => {
+  VER = al; const saved = S.alimentos.includes(al); const u = al.u === 'ud' ? 'ud' : 'g';
+  const info = [al.marca, al.tiendas, al.envase && 'Envase ' + al.envase, al.codigo && 'Cód. ' + al.codigo].filter(Boolean).join(' · ');
+  const st = (l, v, col) => `<div class="stat"><div class="v" style="font-size:18px;${col ? `color:var(--${col})` : ''}">${v}</div><div class="l">${l}</div></div>`;
+  openModal(`<div class="row between" style="align-items:flex-start"><h2>${esc(al.nombre)}</h2><button class="btn sm" onclick="closeModal()">Cerrar</button></div>
+    ${info ? `<div class="sub" style="margin-top:-6px">${esc(info)}</div>` : ''}
+    <label class="f">Por 100 g${al.u === 'ud' ? ` · 1 unidad = ${al.gUd} g` : ''}</label>
+    <div class="grid4">${st('kcal', n1(al.kcal, 0))}${st('Prot.', n1(al.p), 'p')}${st('Carbos', n1(al.c), 'c')}${st('Grasa', n1(al.f), 'f')}</div>
+    <label class="f">Calculadora · cantidad (${u})</label>
+    <div class="row"><input id="av-c" type="number" inputmode="decimal" step="any" value="${defCant(al)}" style="width:110px;flex:none;text-align:center;font-weight:700" oninput="A._avCalc()"><div class="grow" id="av-out"></div></div>
+    <button class="btn block primary" style="margin-top:12px" onclick="A.avAnadir()">+ Añadir a mi dieta</button>
+    ${saved ? `<button class="btn block" style="margin-top:8px" onclick="A.alimentoEdit('${al.id}')">✎ Editar valores</button>` : `<button class="btn block" style="margin-top:8px" onclick="A.avGuardar()">Guardar en mis alimentos</button>`}`);
+  A._avCalc();
+};
+A._avCalc = () => { const el = document.getElementById('av-out'); if (!el || !VER) return; const m = macrosDe(VER, num(document.getElementById('av-c').value) || 0); el.innerHTML = `<div class="b">${Math.round(m.kcal)} kcal</div><div class="macro-line"><span class="mp">P ${n1(m.p)} g</span><span class="mc">C ${n1(m.c)} g</span><span class="mf">G ${n1(m.f)} g</span></div>`; };
+A.avGuardar = () => { if (!VER) return; const al = guardarAl(VER); toast('Guardado en mis alimentos'); render(); A.alimentoVer(al); };
+A.avAnadir = () => {
+  if (!VER) return; const cant = num(document.getElementById('av-c')?.value) || defCant(VER); const d = dietaActiva(); const src = VER;
+  if (!d.comidas.length) { toast('Tu dieta no tiene comidas: créalas en «Mi dieta»', 2600); return; }
+  openModal(`<h2>¿A qué comida?</h2><div class="sub">${esc(src.nombre)} · ${fmtCant(src, cant)} · ${esc(d.nombre)}</div><div class="list" style="margin-top:8px">${d.comidas.map((c) => `<div class="li" onclick="A._avA('${c.id}',${cant})"><div class="grow"><b>${esc(c.nombre)}</b><div class="xs muted">${esc(c.hora)} · ${c.items.length} alimentos</div></div><span class="muted">+</span></div>`).join('')}</div><button class="btn block" style="margin-top:10px" onclick="closeModal()">Cancelar</button>`);
+};
+A._avA = (cid, cant) => { if (!VER) return; const al = guardarAl(VER); const d = dietaActiva(); const c = d.comidas.find((x) => x.id === cid); if (!c) return; c.items.push({ id: uid('it'), opciones: [{ al: al.id, g: cant, gd: null }], sel: 0, nota: '' }); save(); closeModal(); render(); toast(`Añadido a ${c.nombre}`); };
+
+/* ---- Escáner de código de barras ---- */
+let SCAN = null;
+function loadScript(src) { return new Promise((res, rej) => { if (document.querySelector(`script[data-src="${src}"]`)) return res(); const s = document.createElement('script'); s.src = src; s.dataset.src = src; s.onload = res; s.onerror = () => { s.remove(); rej(new Error('script')); }; document.head.appendChild(s); }); }
+// Extrae el código de producto (EAN/UPC) del texto leído; admite QR con enlace GS1 (…/01/<código>)
+function codigoDe(txt) {
+  const s = String(txt || '').trim();
+  if (/^\d{8,14}$/.test(s)) return s;
+  const m = s.match(/\/01\/(\d{8,14})(?:\D|$)/) || s.match(/(?:^|\D)(\d{13})(?:\D|$)/);
+  return m ? m[1] : null;
+}
+A.escanear = () => {
+  openModal(`<div class="row between"><h2>Escanear producto</h2><button class="btn sm" onclick="A.scanCancel()">Cerrar</button></div>
+    <div class="scanbox"><video id="sc-v" playsinline muted autoplay></video><div class="scanline"></div></div>
+    <div id="sc-msg" class="sub center" style="margin:8px 0">Abriendo la cámara…</div>
+    <label class="f">¿No lo lee? Escribe los números del código de barras</label>
+    <div class="row"><input id="sc-code" inputmode="numeric" placeholder="p. ej. 8480000109088" onkeydown="if(event.key==='Enter')A.scanManual()"><button class="btn primary" style="flex:none" onclick="A.scanManual()">Buscar</button></div>`);
+  MODAL_CLOSE = scanStop;
+  scanStart();
+};
+async function scanStart() {
+  const v = document.getElementById('sc-v'); const st = SCAN = { stop: false, stream: null, reader: null };
+  const msg = (t) => { const e = document.getElementById('sc-msg'); if (e && !st.stop) e.textContent = t; };
+  if (!navigator.mediaDevices?.getUserMedia) { msg('Este navegador no deja usar la cámara aquí. Escribe el código a mano.'); return; }
+  const video = { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } };
+  try {
+    let nativo = false;
+    if ('BarcodeDetector' in window) { try { nativo = (await BarcodeDetector.getSupportedFormats()).includes('ean_13'); } catch (e) { } }
+    if (nativo) {
+      const stream = await navigator.mediaDevices.getUserMedia({ video, audio: false });
+      if (st.stop) { stream.getTracks().forEach((t) => t.stop()); return; }
+      st.stream = stream; v.srcObject = stream; await v.play().catch(() => { });
+      const det = new BarcodeDetector({ formats: ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'qr_code'] });
+      msg('Apunta al código de barras del envase');
+      const tick = async () => { if (st.stop) return; try { const c = (await det.detect(v)).map((x) => codigoDe(x.rawValue)).find(Boolean); if (c) return scanFound(st, c); } catch (e) { } setTimeout(tick, 160); };
+      tick();
+    } else {
+      await loadScript('./zxing.min.js');
+      if (st.stop) return;
+      const Z = window.ZXing; if (!Z) throw new Error('script'); const hints = new Map();
+      hints.set(Z.DecodeHintType.POSSIBLE_FORMATS, [Z.BarcodeFormat.EAN_13, Z.BarcodeFormat.EAN_8, Z.BarcodeFormat.UPC_A, Z.BarcodeFormat.UPC_E, Z.BarcodeFormat.QR_CODE]);
+      const reader = st.reader = new Z.BrowserMultiFormatReader(hints, 150);
+      await reader.decodeFromConstraints({ video, audio: false }, v, (res) => { if (st.stop || !res) return; const c = codigoDe(res.getText()); if (c) scanFound(st, c); });
+      if (st.stop) { try { reader.reset(); } catch (e) { } return; }
+      msg('Apunta al código de barras del envase');
+    }
+  } catch (e) {
+    msg(e?.name === 'NotAllowedError' ? 'No hay permiso para usar la cámara. Actívalo en los ajustes del navegador o escribe el código a mano.' : e?.message === 'script' ? 'No se pudo cargar el lector (hace falta conexión la primera vez). Escribe el código a mano.' : 'No se pudo abrir la cámara. Escribe el código a mano.');
+  }
+}
+function scanStop() { const st = SCAN; if (!st) return; SCAN = null; st.stop = true; try { st.reader?.reset(); } catch (e) { } try { st.stream?.getTracks().forEach((t) => t.stop()); } catch (e) { } }
+function scanFound(st, code) { if (st.stop) return; scanStop(); try { navigator.vibrate?.(60); } catch (e) { } A.buscarCodigo(code); }
+// Al cerrar el escáner o la búsqueda por código: si venimos del selector de alimentos, se vuelve a él
+function scanVolver() { if (FS.modo === 'modal' && FS.cb && FS._o) A.pickAlimento(FS._o); else closeModal(); }
+A.scanCancel = () => scanVolver();
+A.scanManual = () => { const c = codigoDe(document.getElementById('sc-code')?.value.replace(/\s/g, '')); if (!c) { toast('Escribe los 8-13 números del código'); return; } A.buscarCodigo(c); };
+A.buscarCodigo = async (code) => {
+  const local = S.alimentos.find((a) => a.codigo === code);
+  if (local) { fsElegir(local); return; }
+  openModal(`<h2>Buscando producto…</h2><div class="sub">Código ${esc(code)}</div><div class="empty small">Consultando Open Food Facts…</div>`);
+  const fallo = (titulo, texto, pre) => { PRE = pre; openModal(`<h2>${titulo}</h2><div class="sub">${texto}</div><div class="spacer"></div><button class="btn block primary" onclick="A.buscarCodigo('${code}')">Reintentar</button><button class="btn block" style="margin-top:8px" onclick="A.escanear()">Escanear otro</button><button class="btn block" style="margin-top:8px" onclick="A.fsCrear(PRE)">Crear el alimento a mano</button><button class="btn block" style="margin-top:8px" onclick="scanVolver()">Cancelar</button>`); };
+  let j;
+  try { if (navigator.onLine === false) throw 0; j = await offGet(`https://world.openfoodfacts.org/api/v2/product/${code}.json?fields=${OFF_FIELDS}`); }
+  catch (e) { fallo('Sin conexión', `No se pudo consultar el código ${esc(code)}. Comprueba la conexión y reinténtalo, o crea el alimento a mano con los datos de la etiqueta.`, { codigo: code }); return; }
+  const prod = j && (j.status === 1 || j.status === 'success') ? j.product : null;
+  const al = offToAl(prod);
+  if (al) { al.codigo = code; fsElegir(al); return; }
+  if (prod) fallo('Sin datos nutricionales', `«${esc(prod.product_name_es || prod.product_name || code)}» está en la base de datos pero sin kcal ni macros. Puedes crearlo a mano con los datos de la etiqueta.`, { codigo: code, nombre: prod.product_name_es || prod.product_name || '', marca: String(prod.brands || '').split(',')[0].trim() });
+  else fallo('Producto no encontrado', `El código ${esc(code)} no está en Open Food Facts. Puedes crearlo a mano con los datos de la etiqueta: quedará guardado con su código y la próxima vez el escáner lo reconocerá.`, { codigo: code });
+};
+let PRE = null;
+
+/* ---- Alta y edición manual de alimentos ---- */
+const AL_FIELDS = (a) => [{ k: 'nombre', label: 'Nombre', value: a?.nombre || '' }, { k: 'marca', label: 'Marca / supermercado (opcional)', value: a?.marca || '' }, { k: 'cat', label: 'Categoría', type: 'select', value: a?.cat || 'Proteína', opts: ['Carbohidrato', 'Proteína', 'Grasa', 'Lácteo/Bebida', 'Fruta', 'Verdura', 'Suplemento', 'Otro'].map((c) => ({ v: c, l: c })) }, { k: 'kcal', label: 'kcal por 100 g', type: 'number', value: a?.kcal ?? '' }, { k: 'p', label: 'Proteína por 100 g', type: 'number', value: a?.p ?? '' }, { k: 'c', label: 'Carbohidratos por 100 g', type: 'number', value: a?.c ?? '' }, { k: 'f', label: 'Grasa por 100 g', type: 'number', value: a?.f ?? '' }, { k: 'u', label: 'Unidad de medida', type: 'select', value: a?.u || 'g', opts: [{ v: 'g', l: 'Se pesa en gramos' }, { v: 'ud', l: 'Se cuenta por unidades' }] }, { k: 'gUd', label: 'Gramos por unidad (si es por unidad)', type: 'number', value: a?.gUd || '' }, { k: 'codigo', label: 'Código de barras (opcional)', value: a?.codigo || '' }];
+const _alDe = (o) => { const u = o.u === 'ud' && o.gUd > 0 ? 'ud' : 'g'; return { nombre: (o.nombre || '').trim(), marca: (o.marca || '').trim(), cat: o.cat, u, gUd: u === 'ud' ? o.gUd : 0, kcal: o.kcal || 0, p: o.p || 0, c: o.c || 0, f: o.f || 0, codigo: (o.codigo || '').replace(/\D/g, '') }; };
+A.alimentoNuevo = (cb, pre) => promptBox('Nuevo alimento', AL_FIELDS(pre || null), (o) => { const d = _alDe(o); if (!d.nombre) { toast('Falta el nombre'); return; } if (!d.kcal && (d.p || d.c || d.f)) d.kcal = Math.round(d.p * 4 + d.c * 4 + d.f * 9); const al = { id: uid('al'), ...d }; S.alimentos.push(al); save(); toast('Alimento guardado'); if (cb) cb(al); else render(); });
+A.alimentoEdit = (id) => { const a = alimentoById(id); if (!a) return; promptBox('Editar alimento', AL_FIELDS(a), (o) => { const d = _alDe(o); if (!d.nombre) d.nombre = a.nombre; Object.assign(a, d); save(); render(); toast('Alimento actualizado'); }); const m = document.getElementById('modal'); const del = document.createElement('button'); del.className = 'btn block danger'; del.style.marginTop = '8px'; del.textContent = 'Eliminar alimento'; del.onclick = () => { const usado = S.dietas.some((d) => d.comidas.some((c) => c.items.some((it) => it.opciones.some((op) => op.al === id)))); confirmBox(usado ? '¿Eliminar este alimento? Está en tu dieta: allí quedará como opción vacía.' : '¿Eliminar este alimento?', () => { S.alimentos = S.alimentos.filter((x) => x.id !== id); save(); render(); }, true); }; m.querySelector('.modal').appendChild(del); };
 
 /* ====== VISTA: PROGRESO (revisiones, peso, gráficas, fotos, ISAK) ====== */
 const MEDIDAS = [['hombro', 'Hombro'], ['pecho', 'Pecho'], ['brazoD', 'Brazo D'], ['brazoI', 'Brazo I'], ['cinturaAlta', 'Cintura alta'], ['cinturaBaja', 'Cintura baja'], ['muslo', 'Muslo'], ['gemelo', 'Gemelo']];
